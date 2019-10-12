@@ -1,5 +1,7 @@
+import json
 import os
 import shutil
+import sys
 
 import pymysql
 import yaml
@@ -9,8 +11,8 @@ class ConnectionError(Exception):
     pass
 
 
-# conn creates connection to database
-def conn():
+# connection creates connection to database
+def connection():
     try:
         import config
 
@@ -77,13 +79,13 @@ def get_rows(conn, table_name):
     return rows
 
 
-def dump_table(c, table_dir, table_name):
+def dump_table(conn, table_dir, table_name):
     print("Processing table {}:".format(table_name))
     os.mkdir(table_dir)
     with open(os.path.join(table_dir, "create_table.sql"), "w") as f:
-        f.write(get_create_table_stmt(c, table_name))
+        f.write(get_create_table_stmt(conn, table_name))
     with open(os.path.join(table_dir, "desc_table.yaml"), "w") as f:
-        columns = get_columns(c, table_name)
+        columns = get_columns(conn, table_name)
         f.write(yaml.dump(columns))
     # os.mkdir(os.path.join(table_dir, "rows"))
     for column in columns:
@@ -91,27 +93,23 @@ def dump_table(c, table_dir, table_name):
             os.mkdir(os.path.join(table_dir,
                                   "column_{}".format(column["Field"])))
     rows = ""
-    for i, row in enumerate(get_rows(c, table_name)):
+    for i, row in enumerate(get_rows(conn, table_name)):
         text_list = []
         for column in columns:
             if column["Type"] in ["text", "mediumtext", "longtext"]:
                 with open(os.path.join(table_dir,
                                        "column_{}".format(column["Field"]),
-                                       "{}.txt".format(i)), "w") as c:
-                    c.write(str(row[column["Field"]]))
+                                       "{}.txt".format(i)), "w") as conn:
+                    conn.write(str(row[column["Field"]]))
                 text_list.append("_")
             else:
-                text_list.append(str(row[column["Field"]]) \
-                                 .replace("\\", "\\\\") \
-                                 .replace(",", "\\,") \
-                                 .replace("\n", "\\n"))
-        rows += ",".join(text_list) + "\n"
+                text_list.append(str(row[column["Field"]]))
+        rows += json.dumps(text_list) + "\n"
     with open(os.path.join(table_dir, "rows.txt"), "w") as f:
         f.write(rows)
 
 
-def dump():
-    dataDir = "data"
+def dump(dataDir):
     if os.path.isdir(dataDir):
         shutil.rmtree(dataDir)
     elif os.path.isfile(dataDir):
@@ -119,16 +117,100 @@ def dump():
     os.mkdir(dataDir)
 
     try:
-        c = conn()
+        conn = connection()
         try:
-            for table in get_table_names(c):
-                dump_table(c, os.path.join(dataDir, table), table)
+            for table in get_table_names(conn):
+                dump_table(conn, os.path.join(dataDir, table), table)
         finally:
-            c.close()
+            conn.close()
+    except ConnectionError as e:
+        print(e)
+        exit(1)
+
+
+class RecoverError(Exception):
+    pass
+
+
+def drop_table_if_exists(conn, table_name):
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("DROP TABLE {}".format(table_name))
+        conn.commit()
+    except pymysql.err.InternalError as e:
+        try:
+            # ignore error if table does not exist
+            str(e).index("Unknown table ")
+        except ValueError:
+            raise e
+
+
+def recover_table(conn, table_dir, table_name):
+    print("Recovering table {}:".format(table_name))
+    if not os.path.isdir(table_dir):
+        raise RecoverError("\"{}\" is not a directory".format(table_dir))
+
+    print("... dropping table if exists ...")
+    drop_table_if_exists(conn, table_name)
+
+    print("... creating table ...")
+    with open(os.path.join(table_dir, "create_table.sql")) as f:
+        with conn.cursor() as cursor:
+            cursor.execute(f.read())
+        conn.commit()
+
+    print("... recovering data ...")
+    with open(os.path.join(table_dir, "desc_table.yaml")) as f:
+        columns = yaml.load(f.read(), yaml.Loader)
+    placeholders = []
+    bigDataFlags = {}
+    for i, column in enumerate(columns):
+        placeholders.append("%s")
+        if column["Type"] in ["text", "mediumtext", "longtext"]:
+            bigDataFlags[i] = "column_{}".format(column["Field"])
+    stmt = "INSERT INTO {} VALUE ({})".format(table_name,
+                                              ", ".join(placeholders))
+    with open(os.path.join(table_dir, "rows.txt")) as f:
+        lineNumber = 0
+        for line in f:
+            data = json.loads(line)
+            for i, value in enumerate(data):
+                if i in bigDataFlags:
+                    with open(os.path.join(table_dir, bigDataFlags[i],
+                                           "{}.txt".format(lineNumber))) as c:
+                        data[i] = c.read()
+                else:
+                    data[i] = value
+            with conn.cursor() as cursor:
+                cursor.execute(stmt, data)
+            conn.commit()
+            lineNumber += 1
+
+
+def recover(dataDir):
+    if not os.path.isdir(dataDir):
+        raise RecoverError("\"{}\" is not a directory".format(dataDir))
+
+    try:
+        conn = connection()
+        try:
+            for table in os.listdir(dataDir):
+                recover_table(conn, os.path.join(dataDir, table), table)
+        finally:
+            conn.close()
     except ConnectionError as e:
         print(e)
         exit(1)
 
 
 if __name__ == '__main__':
-    dump()
+    if len(sys.argv) < 2:
+        print("What do you want to do?")
+    else:
+        k = sys.argv[1]
+        if k == "dump":
+            dump("data")
+        elif k == "recover":
+            recover("data")
+        else:
+            print("No such action.")
