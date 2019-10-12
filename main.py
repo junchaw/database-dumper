@@ -63,6 +63,13 @@ def connection():
                            cursorclass=pymysql.cursors.DictCursor)
 
 
+# execute executes a statement and commit to database
+def execute(conn, stmt, data=None):
+    with conn.cursor() as cursor:
+        cursor.execute(stmt, data)
+    conn.commit()
+
+
 # get_table_names returns list of table names in a database
 def get_table_names(conn):
     tables = []
@@ -109,9 +116,7 @@ class RecoverError(Exception):
 
 def drop_table_if_exists(conn, table_name):
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("DROP TABLE {}".format(table_name))
-        conn.commit()
+        execute(conn, "DROP TABLE {}".format(table_name))
     except pymysql.err.InternalError as e:
         try:
             # ignore error if table does not exist
@@ -197,9 +202,7 @@ def recover_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
     if verbose > VERBOSE_NONE:
         log("  Creating table...")
     with open(os.path.join(table_dir, "create_table.sql")) as f:
-        with conn.cursor() as cursor:
-            cursor.execute(f.read())
-        conn.commit()
+        execute(conn, f.read())
 
     if verbose > VERBOSE_NONE:
         log("  Recovering data...")
@@ -232,9 +235,7 @@ def recover_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
                         data[i] = c.read()
                 else:
                     data[i] = value
-            with conn.cursor() as cursor:
-                cursor.execute(stmt, data)
-            conn.commit()
+            execute(conn, stmt, data)
             lineNumber += 1
         print()
 
