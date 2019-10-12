@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 
+import click
 import pymysql
 import yaml
 
@@ -79,6 +80,23 @@ def get_rows(conn, table_name):
     return rows
 
 
+class RecoverError(Exception):
+    pass
+
+
+def drop_table_if_exists(conn, table_name):
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("DROP TABLE {}".format(table_name))
+        conn.commit()
+    except pymysql.err.InternalError as e:
+        try:
+            # ignore error if table does not exist
+            str(e).index("Unknown table ")
+        except ValueError:
+            raise e
+
+
 def dump_table(conn, table_dir, table_name):
     print("Processing table {}:".format(table_name))
     os.mkdir(table_dir)
@@ -109,40 +127,23 @@ def dump_table(conn, table_dir, table_name):
         f.write(rows)
 
 
-def dump(dataDir):
-    if os.path.isdir(dataDir):
-        shutil.rmtree(dataDir)
-    elif os.path.isfile(dataDir):
-        os.remove(dataDir)
-    os.mkdir(dataDir)
+def dump(data_dir, verbose=0):
+    if os.path.isdir(data_dir):
+        shutil.rmtree(data_dir)
+    elif os.path.isfile(data_dir):
+        os.remove(data_dir)
+    os.mkdir(data_dir)
 
     try:
         conn = connection()
         try:
             for table in get_table_names(conn):
-                dump_table(conn, os.path.join(dataDir, table), table)
+                dump_table(conn, os.path.join(data_dir, table), table)
         finally:
             conn.close()
     except ConnectionError as e:
         print(e)
         exit(1)
-
-
-class RecoverError(Exception):
-    pass
-
-
-def drop_table_if_exists(conn, table_name):
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("DROP TABLE {}".format(table_name))
-        conn.commit()
-    except pymysql.err.InternalError as e:
-        try:
-            # ignore error if table does not exist
-            str(e).index("Unknown table ")
-        except ValueError:
-            raise e
 
 
 def recover_table(conn, table_dir, table_name):
@@ -187,15 +188,15 @@ def recover_table(conn, table_dir, table_name):
             lineNumber += 1
 
 
-def recover(dataDir):
-    if not os.path.isdir(dataDir):
-        raise RecoverError("\"{}\" is not a directory".format(dataDir))
+def recover(data_dir, verbose=0):
+    if not os.path.isdir(data_dir):
+        raise RecoverError("\"{}\" is not a directory".format(data_dir))
 
     try:
         conn = connection()
         try:
-            for table in os.listdir(dataDir):
-                recover_table(conn, os.path.join(dataDir, table), table)
+            for table in os.listdir(data_dir):
+                recover_table(conn, os.path.join(data_dir, table), table)
         finally:
             conn.close()
     except ConnectionError as e:
@@ -203,14 +204,17 @@ def recover(dataDir):
         exit(1)
 
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("What do you want to do?")
+@click.command()
+@click.argument('action')
+@click.option('--verbose', default=0, help='Verbose level.')
+def main(verbose, action):
+    if action == "dump":
+        dump("data", verbose=verbose)
+    elif action == "recover":
+        recover("data", verbose=verbose)
     else:
-        k = sys.argv[1]
-        if k == "dump":
-            dump("data")
-        elif k == "recover":
-            recover("data")
-        else:
-            print("No such action.")
+        print("No such action.")
+
+
+if __name__ == '__main__':
+    main()
