@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-import sys
 
 import click
 import pymysql
@@ -171,34 +170,47 @@ def dump(data_dir, verbose=VERBOSE_NONE):
         exit(1)
 
 
-def recover_table(conn, table_dir, table_name):
+def recover_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
     print("Recovering table {}:".format(table_name))
     if not os.path.isdir(table_dir):
         raise RecoverError("\"{}\" is not a directory".format(table_dir))
 
-    print("... dropping table if exists ...")
+    if verbose > VERBOSE_NONE:
+        print("  Dropping table if exists...")
     drop_table_if_exists(conn, table_name)
 
-    print("... creating table ...")
+    if verbose > VERBOSE_NONE:
+        print("  Creating table...")
     with open(os.path.join(table_dir, "create_table.sql")) as f:
         with conn.cursor() as cursor:
             cursor.execute(f.read())
         conn.commit()
 
-    print("... recovering data ...")
+    if verbose > VERBOSE_NONE:
+        print("  Recovering data...")
     with open(os.path.join(table_dir, "desc_table.yaml")) as f:
         columns = yaml.load(f.read(), yaml.Loader)
     placeholders = []
     bigDataFlags = {}
+    if verbose > VERBOSE_NONE:
+        print("  Checking columns...")
     for i, column in enumerate(columns):
         placeholders.append("%s")
         if column["Type"] in ["text", "mediumtext", "longtext"]:
+            if verbose > VERBOSE_NONE:
+                click.echo(click.style(
+                    '  Column "{}" is long data.'.format(column["Field"]),
+                    fg='yellow'))
             bigDataFlags[i] = "column_{}".format(column["Field"])
     stmt = "INSERT INTO {} VALUE ({})".format(table_name,
                                               ", ".join(placeholders))
     with open(os.path.join(table_dir, "rows.txt")) as f:
         lineNumber = 0
         for line in f:
+            if verbose > VERBOSE_IMPORTANT:
+                print('  -- {}'.format(lineNumber))
+            elif verbose > VERBOSE_NONE:
+                print('.', end='')
             data = json.loads(line)
             for i, value in enumerate(data):
                 if i in bigDataFlags:
@@ -211,6 +223,7 @@ def recover_table(conn, table_dir, table_name):
                 cursor.execute(stmt, data)
             conn.commit()
             lineNumber += 1
+        print()
 
 
 def recover(data_dir, verbose=VERBOSE_NONE):
@@ -221,7 +234,8 @@ def recover(data_dir, verbose=VERBOSE_NONE):
         conn = connection()
         try:
             for table in os.listdir(data_dir):
-                recover_table(conn, os.path.join(data_dir, table), table)
+                recover_table(conn, os.path.join(data_dir, table), table,
+                              verbose=verbose)
         finally:
             conn.close()
     except ConnectionError as e:
