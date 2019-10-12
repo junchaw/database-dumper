@@ -13,6 +13,22 @@ VERBOSE_IMPORTANT = 1
 VERBOSE_EVERYTHING = 2
 
 
+# log shows text message
+def log(message: str):
+    click.echo(message)
+
+
+# warning shows warning message
+def warning(message: str):
+    click.echo(click.style(message, fg="yellow"))
+
+
+# error shows error message and exit with error code
+def error(message):
+    click.echo(click.style(message, fg="red"))
+    exit(1)
+
+
 class ConnectionError(Exception):
     pass
 
@@ -103,31 +119,29 @@ def drop_table_if_exists(conn, table_name):
 
 
 def dump_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
-    print('Processing table "{}"...'.format(table_name))
+    log('Processing table "{}"...'.format(table_name))
     os.mkdir(table_dir)
     with open(os.path.join(table_dir, "create_table.sql"), "w") as f:
         if verbose > VERBOSE_NONE:
-            print("  Saving create table statement...")
+            log("  Saving create table statement...")
         f.write(get_create_table_stmt(conn, table_name))
     with open(os.path.join(table_dir, "desc_table.yaml"), "w") as f:
         if verbose > VERBOSE_NONE:
-            print("  Saving desc table output...")
+            log("  Saving desc table output...")
         columns = get_columns(conn, table_name)
         f.write(yaml.dump(columns))
     if verbose > VERBOSE_NONE:
-        print("  Checking columns...")
+        log("  Checking columns...")
     for column in columns:
         if column["Type"] in ["text", "mediumtext", "longtext"]:
             if verbose > VERBOSE_NONE:
-                click.echo(click.style(
-                    '  Column "{}" is long data.'.format(column["Field"]),
-                    fg='yellow'))
+                warning('  Column "{}" is long data.'.format(column["Field"]))
             os.mkdir(os.path.join(table_dir,
                                   "column_{}".format(column["Field"])))
     rows = ""
     for i, row in enumerate(get_rows(conn, table_name)):
         if verbose > VERBOSE_IMPORTANT:
-            print('  -- {}'.format(i))
+            log('  -- {}'.format(i))
         elif verbose > VERBOSE_NONE:
             print('.', end='')
         text_list = []
@@ -148,12 +162,12 @@ def dump_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
 
 def dump(data_dir, verbose=VERBOSE_NONE):
     if os.path.isdir(data_dir):
-        print('"{}" is a directory, removing...'.format(data_dir))
+        log('"{}" is a directory, removing...'.format(data_dir))
         shutil.rmtree(data_dir)
     elif os.path.isfile(data_dir):
-        print('"{}" is a file, removing...'.format(data_dir))
+        log('"{}" is a file, removing...'.format(data_dir))
         os.remove(data_dir)
-    print('Creating directory "{}"...'.format(data_dir))
+    log('Creating directory "{}"...'.format(data_dir))
     os.mkdir(data_dir)
 
     try:
@@ -164,43 +178,40 @@ def dump(data_dir, verbose=VERBOSE_NONE):
                            verbose=verbose)
         finally:
             conn.close()
-        print("Done!")
+        log("Done!")
     except ConnectionError as e:
-        print(e)
-        exit(1)
+        error(e)
 
 
 def recover_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
-    print("Recovering table {}:".format(table_name))
+    log("Recovering table {}:".format(table_name))
     if not os.path.isdir(table_dir):
         raise RecoverError("\"{}\" is not a directory".format(table_dir))
 
     if verbose > VERBOSE_NONE:
-        print("  Dropping table if exists...")
+        log("  Dropping table if exists...")
     drop_table_if_exists(conn, table_name)
 
     if verbose > VERBOSE_NONE:
-        print("  Creating table...")
+        log("  Creating table...")
     with open(os.path.join(table_dir, "create_table.sql")) as f:
         with conn.cursor() as cursor:
             cursor.execute(f.read())
         conn.commit()
 
     if verbose > VERBOSE_NONE:
-        print("  Recovering data...")
+        log("  Recovering data...")
     with open(os.path.join(table_dir, "desc_table.yaml")) as f:
         columns = yaml.load(f.read(), yaml.Loader)
     placeholders = []
     bigDataFlags = {}
     if verbose > VERBOSE_NONE:
-        print("  Checking columns...")
+        log("  Checking columns...")
     for i, column in enumerate(columns):
         placeholders.append("%s")
         if column["Type"] in ["text", "mediumtext", "longtext"]:
             if verbose > VERBOSE_NONE:
-                click.echo(click.style(
-                    '  Column "{}" is long data.'.format(column["Field"]),
-                    fg='yellow'))
+                warning('  Column "{}" is long data.'.format(column["Field"]))
             bigDataFlags[i] = "column_{}".format(column["Field"])
     stmt = "INSERT INTO {} VALUE ({})".format(table_name,
                                               ", ".join(placeholders))
@@ -208,7 +219,7 @@ def recover_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
         lineNumber = 0
         for line in f:
             if verbose > VERBOSE_IMPORTANT:
-                print('  -- {}'.format(lineNumber))
+                log('  -- {}'.format(lineNumber))
             elif verbose > VERBOSE_NONE:
                 print('.', end='')
             data = json.loads(line)
@@ -239,8 +250,7 @@ def recover(data_dir, verbose=VERBOSE_NONE):
         finally:
             conn.close()
     except ConnectionError as e:
-        print(e)
-        exit(1)
+        error(e)
 
 
 @click.command()
@@ -252,7 +262,7 @@ def main(verbose, action):
     elif action == "recover":
         recover("data", verbose=verbose)
     else:
-        print("No such action.")
+        log("No such action.")
 
 
 if __name__ == '__main__':
