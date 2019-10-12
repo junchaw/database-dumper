@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import time
 
 import click
 import pymysql
@@ -252,6 +253,7 @@ def recover(data_dir, verbose=VERBOSE_NONE):
                               verbose=verbose)
         finally:
             conn.close()
+        log("Done!")
     except ConnectionError as e:
         error(e)
 
@@ -260,12 +262,14 @@ def recover(data_dir, verbose=VERBOSE_NONE):
 @click.argument('action')
 @click.option('--verbose', default=VERBOSE_NONE, help='Verbose level.')
 def main(verbose, action):
+    start_time = time.time()
     if action == "dump":
         dump("data", verbose=verbose)
     elif action == "recover":
         recover("data", verbose=verbose)
     else:
         log("No such action.")
+    log("--- {} seconds used ---".format(time.time() - start_time))
 
 
 if __name__ == '__main__':
