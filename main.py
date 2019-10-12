@@ -6,6 +6,8 @@ import click
 import pymysql
 import yaml
 
+LONG_COLUMN = ['text', 'mediumtext', 'longtext']
+
 VERBOSE_NONE = 0
 
 VERBOSE_IMPORTANT = 1
@@ -133,7 +135,7 @@ def dump_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
     if verbose > VERBOSE_NONE:
         log("  Checking columns...")
     for column in columns:
-        if column["Type"] in ["text", "mediumtext", "longtext"]:
+        if column["Type"] in LONG_COLUMN:
             if verbose > VERBOSE_NONE:
                 warning('  Column "{}" is long data.'.format(column["Field"]))
             os.mkdir(os.path.join(table_dir,
@@ -146,7 +148,7 @@ def dump_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
             print('.', end='')
         text_list = []
         for column in columns:
-            if column["Type"] in ["text", "mediumtext", "longtext"]:
+            if column["Type"] in LONG_COLUMN:
                 with open(os.path.join(table_dir,
                                        "column_{}".format(column["Field"]),
                                        "{}.txt".format(i)), "w") as conn:
@@ -209,7 +211,7 @@ def recover_table(conn, table_dir, table_name, verbose=VERBOSE_NONE):
         log("  Checking columns...")
     for i, column in enumerate(columns):
         placeholders.append("%s")
-        if column["Type"] in ["text", "mediumtext", "longtext"]:
+        if column["Type"] in LONG_COLUMN:
             if verbose > VERBOSE_NONE:
                 warning('  Column "{}" is long data.'.format(column["Field"]))
             bigDataFlags[i] = "column_{}".format(column["Field"])
